@@ -1,0 +1,63 @@
+name: Deploy Streamlit Cloud branch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: streamlit-cloud-deploy
+  cancel-in-progress: true
+
+jobs:
+  build-and-push-cloud-branch:
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: gpt-4o-mini
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      APP_RUNTIME_MODE: direct
+      DOCS_PATH: data/pdfs
+      CHROMA_DIR: storage/chroma
+      SQLITE_PATH: storage/memory/chat_history.db
+      TODO_PATH: storage/memory/todo.json
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Chroma index
+        run: python -m scripts.ingest --reset
+
+      - name: Remove local runtime leftovers
+        run: |
+          rm -f storage/memory/chat_history.db
+          mkdir -p storage/memory
+          test -f storage/memory/todo.json || echo '[]' > storage/memory/todo.json
+
+      - name: Publish streamlit-cloud branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan streamlit-cloud
+          git add -A
+          git add -f storage/chroma
+          git commit -m "Deploy Streamlit Cloud build from ${GITHUB_SHA}"
+          git push --force origin streamlit-cloud
